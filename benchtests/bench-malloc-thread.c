@@ -16,6 +16,7 @@
    License along with the GNU C Library; if not, see
    <https://www.gnu.org/licenses/>.  */
 
+#include <assert.h>
 #include <errno.h>
 #include <math.h>
 #include <pthread.h>
@@ -31,8 +32,8 @@
 #include "json-lib.h"
 
 /* Benchmark duration in seconds.  */
-#define BENCHMARK_DURATION	10
-#define RAND_SEED		88
+#define BENCHMARK_DURATION      10
+#define RAND_SEED               88
 
 #ifndef NUM_THREADS
 # define NUM_THREADS 1
@@ -44,10 +45,10 @@
 
    However due to the distribution of the random block sizes
    the typical amount allocated will be much smaller.  */
-#define WORKING_SET_SIZE	1024
+#define WORKING_SET_SIZE        1024
 
-#define MIN_ALLOCATION_SIZE	4
-#define MAX_ALLOCATION_SIZE	32768
+#define MIN_ALLOCATION_SIZE     4
+#define MAX_ALLOCATION_SIZE     32768
 
 /* Get a random block size with an inverse square distribution.  */
 static unsigned int
@@ -66,11 +67,11 @@ get_block_size (unsigned int rand_data)
   float r = (float) rand_data / RAND_MAX;
 
   return (unsigned int) powf ((max_pow - min_pow) * r + min_pow,
-			      1 / (exponent + 1));
+                              1 / (exponent + 1));
 }
 
-#define NUM_BLOCK_SIZES	8000
-#define NUM_OFFSETS	((WORKING_SET_SIZE) * 4)
+#define NUM_BLOCK_SIZES 8000
+#define NUM_OFFSETS     ((WORKING_SET_SIZE) * 4)
 
 static unsigned int random_block_sizes[NUM_BLOCK_SIZES];
 static unsigned int random_offsets[NUM_OFFSETS];
@@ -137,7 +138,14 @@ malloc_benchmark_loop (void **ptr_arr)
 
       free (ptr_arr[next_idx]);
 
-      ptr_arr[next_idx] = malloc (next_block);
+      void* ptr = malloc (next_block);
+      // allocation time isn't realistic if out of memory, so ensure all allocations succeed
+      if (ptr == NULL)
+      {
+          printf ("Out of memory\n");
+          assert (ptr != NULL);
+      }
+      ptr_arr[next_idx] = ptr;
 
       iters++;
     }
@@ -199,24 +207,24 @@ do_benchmark (size_t num_threads, size_t *iters)
       *iters = 0;
 
       for (size_t i = 0; i < num_threads; i++)
-	{
-	  args[i].working_set = working_set[i];
-	  pthread_create(&threads[i], NULL, benchmark_thread, &args[i]);
-	}
+        {
+          args[i].working_set = working_set[i];
+          pthread_create(&threads[i], NULL, benchmark_thread, &args[i]);
+        }
 
       for (size_t i = 0; i < num_threads; i++)
-	{
-	  pthread_join(threads[i], NULL);
-	  TIMING_ACCUM (elapsed, args[i].elapsed);
-	  *iters += args[i].iters;
-	}
+        {
+          pthread_join(threads[i], NULL);
+          TIMING_ACCUM (elapsed, args[i].elapsed);
+          *iters += args[i].iters;
+        }
     }
   return elapsed;
 }
 
-static void usage(const char *name)
+static void usage(const char *executable_name)
 {
-  fprintf (stderr, "%s: <num_threads>\n", name);
+  fprintf (stderr, "Usage: %s: <num_threads>\n", executable_name);
   exit (1);
 }
 
@@ -239,7 +247,7 @@ main (int argc, char **argv)
       ret = strtol(argv[1], NULL, 10);
 
       if (errno || ret == 0)
-	usage(argv[0]);
+        usage(argv[0]);
 
       num_threads = ret;
     }
@@ -275,14 +283,18 @@ main (int argc, char **argv)
   d_total_s = cur;
   d_total_i = iters;
 
-  json_attr_double (&json_ctx, "duration", d_total_s);
+  // Units for x86 processors are "clock cycles"
+  json_attr_double (&json_ctx, "duration_clock_cycles", d_total_s);
+  // each iteration is equal to 1 free + 1 malloc
   json_attr_double (&json_ctx, "iterations", d_total_i);
-  json_attr_double (&json_ctx, "time_per_iteration", d_total_s / d_total_i);
-  json_attr_double (&json_ctx, "max_rss", usage.ru_maxrss);
+  // Units for x86 processors are "clock cycles"
+  json_attr_double (&json_ctx, "time_per_iteration_clock_cycles", d_total_s / d_total_i);
+  // Maximum resident set size (in kilobytes)
+  json_attr_double (&json_ctx, "max_rss_kb", usage.ru_maxrss);
 
-  json_attr_double (&json_ctx, "threads", num_threads);
-  json_attr_double (&json_ctx, "min_size", MIN_ALLOCATION_SIZE);
-  json_attr_double (&json_ctx, "max_size", MAX_ALLOCATION_SIZE);
+  json_attr_double (&json_ctx, "num_threads", num_threads);
+  json_attr_double (&json_ctx, "min_allocation_size_bytes)", MIN_ALLOCATION_SIZE);
+  json_attr_double (&json_ctx, "max_allocation_size_bytes)", MAX_ALLOCATION_SIZE);
   json_attr_double (&json_ctx, "random_seed", RAND_SEED);
 
   json_attr_object_end (&json_ctx);
